@@ -1,0 +1,10 @@
+{
+  "name": "ShiftTown Ithaca",
+  "short_name": "ShiftTown",
+  "start_url": "/",
+  "display": "standalone",
+  "orientation": "portrait",
+  "background_color": "#FFFDF7",
+  "theme_color": "#FFFDF7",
+  "icons": [{ "src": "/icon.svg", "sizes": "any", "type": "image/svg+xml", "purpose": "any maskable" }]
+}

@@ -1,0 +1,254 @@
+@import 'tailwindcss';
+
+@theme {
+  --font-sans: 'Baloo 2', ui-rounded, 'SF Pro Rounded', system-ui, -apple-system, 'Segoe UI', sans-serif;
+  --color-cream: #fffdf7;
+  --color-ink: #3a3550;
+  --color-muted: #8c88a3;
+  --color-line: #efeaf5;
+  --color-pink: #ff8fb1;
+  --color-pink-soft: #ffe3ec;
+  --color-pink-deep: #e85d8a;
+  --color-sky: #6ec6ff;
+  --color-sky-soft: #ddf2ff;
+  --color-sky-deep: #2b8fd6;
+  --color-sun: #ffd25a;
+  --color-sun-soft: #fff4cc;
+  --color-sun-deep: #b98500;
+  --color-mint: #5cc49e;
+  --color-mint-soft: #d9f7ea;
+  --color-mint-deep: #23875f;
+  --color-lav: #b79cff;
+  --color-lav-soft: #efe8ff;
+  --color-lav-deep: #6f4fd6;
+  --color-peach: #ffb38a;
+  --color-peach-soft: #ffeadf;
+  --color-red: #ff6b6b;
+  --color-red-soft: #ffe5e5;
+  --shadow-soft: 0 6px 22px rgba(58, 53, 80, 0.09);
+  --shadow-pop: 0 4px 0 rgba(58, 53, 80, 0.13);
+  --shadow-lift: 0 12px 34px rgba(58, 53, 80, 0.16);
+}
+
+@layer base {
+  :root {
+    color-scheme: light only;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
+    background: var(--color-cream);
+    color: var(--color-ink);
+    font-family: var(--font-sans);
+    font-size: 17px;
+    -webkit-font-smoothing: antialiased;
+    -webkit-tap-highlight-color: transparent;
+    overscroll-behavior: none;
+    user-select: none;
+    -webkit-user-select: none;
+  }
+
+  input,
+  textarea {
+    user-select: text;
+    -webkit-user-select: text;
+  }
+
+  button {
+    cursor: pointer;
+    touch-action: manipulation;
+  }
+}
+
+.pt-safe {
+  padding-top: max(env(safe-area-inset-top), 10px);
+}
+.pb-safe {
+  padding-bottom: max(env(safe-area-inset-bottom), 8px);
+}
+
+.no-scrollbar::-webkit-scrollbar {
+  display: none;
+}
+.no-scrollbar {
+  scrollbar-width: none;
+}
+
+/* ── avatar ── */
+.avatar .av-body {
+  transform-box: view-box;
+  transform-origin: 50px 112px;
+}
+.av-idle .av-body {
+  animation: bob 2.8s ease-in-out infinite;
+}
+.av-walk .av-body {
+  animation: step 0.32s ease-in-out infinite alternate;
+}
+.av-jump .av-body {
+  animation: jump 0.62s cubic-bezier(0.3, 0.7, 0.4, 1) 3;
+}
+.av-arm-wave {
+  transform-box: view-box;
+  transform-origin: 67px 71px;
+  animation: wave 0.42s ease-in-out 6 alternate;
+}
+.av-eyes {
+  transform-box: fill-box;
+  transform-origin: center;
+  animation: blink 4.5s infinite;
+}
+
+@keyframes bob {
+  50% {
+    transform: translateY(-2.5px) scaleY(1.015);
+  }
+}
+@keyframes step {
+  from {
+    transform: translateY(0) rotate(-3deg);
+  }
+  to {
+    transform: translateY(-4px) rotate(3deg);
+  }
+}
+@keyframes jump {
+  0% {
+    transform: translateY(0) scale(1.06, 0.92);
+  }
+  45% {
+    transform: translateY(-26px) scale(0.96, 1.05);
+  }
+  100% {
+    transform: translateY(0) scale(1);
+  }
+}
+@keyframes wave {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(-140deg);
+  }
+}
+@keyframes blink {
+  0%,
+  94%,
+  100% {
+    transform: scaleY(1);
+  }
+  97% {
+    transform: scaleY(0.1);
+  }
+}
+
+/* ── ui motion ── */
+.anim-float {
+  animation: float 1.8s ease-in-out infinite;
+}
+.anim-pop {
+  animation: pop 0.45s cubic-bezier(0.2, 1.4, 0.4, 1) both;
+}
+.anim-up {
+  animation: up 0.28s cubic-bezier(0.2, 0.9, 0.3, 1) both;
+}
+.anim-fade {
+  animation: fade 0.2s ease both;
+}
+.anim-shake {
+  animation: shake 0.35s ease;
+}
+.anim-wiggle {
+  animation: wiggle 1.4s ease-in-out infinite;
+}
+
+@keyframes float {
+  50% {
+    transform: translateY(-5px);
+  }
+}
+@keyframes pop {
+  from {
+    transform: scale(0.3);
+    opacity: 0;
+  }
+  to {
+    transform: scale(1);
+    opacity: 1;
+  }
+}
+@keyframes up {
+  from {
+    transform: translateY(100%);
+  }
+}
+@keyframes fade {
+  from {
+    opacity: 0;
+  }
+}
+@keyframes shake {
+  25% {
+    transform: translateX(-5px);
+  }
+  75% {
+    transform: translateX(5px);
+  }
+}
+@keyframes wiggle {
+  0%,
+  100% {
+    transform: rotate(0);
+  }
+  10% {
+    transform: rotate(-12deg);
+  }
+  20% {
+    transform: rotate(10deg);
+  }
+  30% {
+    transform: rotate(0);
+  }
+}
+
+.confetti {
+  position: absolute;
+  top: -12px;
+  width: 9px;
+  height: 14px;
+  border-radius: 3px;
+  animation: fall 1.8s ease-in forwards;
+}
+@keyframes fall {
+  to {
+    transform: translateY(105vh) rotate(720deg);
+    opacity: 0.7;
+  }
+}
+
+.map-walk {
+  transition: transform 0.9s cubic-bezier(0.45, 0, 0.3, 1);
+}
+
+/* Everything works with motion off. */
+html[data-motion='off'] *,
+html[data-motion='off'] *::before,
+html[data-motion='off'] *::after {
+  animation: none !important;
+  transition: none !important;
+}
+
+/* Map names appear once you zoom in; signs and bubbles carry the overview. */
+[data-zoom='far'] .map-name:not(.is-sel) {
+  opacity: 0;
+  pointer-events: none;
+}
+.map-name {
+  transition: opacity 0.2s;
+}

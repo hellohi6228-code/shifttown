@@ -1,0 +1,7 @@
+<?xml version='1.0' encoding='utf-8'?>
+<resources>
+    <string name="app_name">ShiftTown</string>
+    <string name="title_activity_main">ShiftTown</string>
+    <string name="package_name">town.shift.ithaca</string>
+    <string name="custom_url_scheme">town.shift.ithaca</string>
+</resources>
