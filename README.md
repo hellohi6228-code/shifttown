@@ -17,6 +17,10 @@ npm run dev
 ```
 
 Open http://localhost:5173 (phone-sized window works best).
+
+**Try it on any phone:** https://hellohi6228-code.github.io/shifttown/ — the demo,
+hosted on GitHub Pages. Update it with `npm run deploy:pages` (builds and pushes
+`dist/` to the `gh-pages` branch).
 With no Supabase keys the app runs in **demo mode**: data lives on the device and
 everything is labelled `DEMO`.
 
