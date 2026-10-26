@@ -2,11 +2,10 @@ import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState } fr
 import type { Look, Restaurant } from '../types'
 import { area, toGrid } from '../lib/geo'
 import { Figure } from './Avatar'
-import { Building, buildingBase, buildingTop, doorstep } from './map/Building'
-import { DECOS, DISTRICTS, Scene, WALK_PATHS } from './map/Scene'
+import { Building, buildingBase, doorstep, signOf } from './map/Building'
+import { DECOS, Scene, WALK_PATHS } from './map/Scene'
 import { MAP_H, MAP_W, px } from './map/geometry'
-
-type State = 'new' | 'hiring' | 'none'
+import { layoutStores } from './map/layout'
 
 const TOWNSFOLK: Look[] = [
   { skin: 1, hair: 0, hairColor: 2, outfit: 0, outfitColor: 3, acc: 0 },
@@ -27,10 +26,13 @@ export interface MapPlayer {
 }
 
 export function TownMap({
-  restaurants, states, faded, points, selectedId, onSelect, player, motion, labels = true,
+  restaurants, grey, marks, faded, points, selectedId, onSelect, player, motion, labels = true,
 }: {
   restaurants: Restaurant[]
-  states: Record<string, State>
+  /** Stores still locked for this person (training not done yet). */
+  grey?: Set<string>
+  /** Stores with something this person can book right now. */
+  marks?: Set<string>
   faded?: Set<string>
   points?: Record<string, number>
   selectedId?: string | null
@@ -51,9 +53,10 @@ export function TownMap({
     const v = view.current
     const vw = box.clientWidth
     const vh = box.clientHeight
-    v.s = clamp(v.s, MIN_S, MAX_S)
-    v.x = clamp(v.x, vw * 0.5 - MAP_W * v.s, vw * 0.5)
-    v.y = clamp(v.y, vh * 0.45 - MAP_H * v.s, vh * 0.45)
+    // Never show past the edge of the map.
+    v.s = clamp(v.s, Math.max(MIN_S, vw / MAP_W, vh / MAP_H), MAX_S)
+    v.x = clamp(v.x, vw - MAP_W * v.s, 0)
+    v.y = clamp(v.y, vh - MAP_H * v.s, 0)
     el.style.transition = animate ? 'transform 0.45s cubic-bezier(0.3, 0.8, 0.3, 1)' : 'none'
     el.style.transform = `translate3d(${v.x}px, ${v.y}px, 0) scale(${v.s})`
     el.style.setProperty('--inv', String(clamp(1 / v.s, 0.7, 1.15)))
@@ -90,15 +93,16 @@ export function TownMap({
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [])
 
+  const spots = useMemo(() => layoutStores(restaurants), [restaurants])
+
   // Bring the chosen restaurant into the top part of the screen (the sheet covers the bottom).
   useEffect(() => {
     if (!selectedId) return
-    const r = restaurants.find((x) => x.id === selectedId)
-    if (!r) return
-    const g = toGrid(r.lat, r.lng)
+    const g = spots.get(selectedId)
+    if (!g) return
     const p = px(g.gx, g.gy)
     centerOn(p.x, p.y - 30, Math.max(view.current.s, 0.75), 0.24)
-  }, [selectedId, restaurants, centerOn])
+  }, [selectedId, spots, centerOn])
 
   // Pan, pinch and wheel zoom.
   useEffect(() => {
@@ -194,15 +198,15 @@ export function TownMap({
 
   // Keep scenery clear of restaurants added later.
   const decos = useMemo(() => {
-    const spots = restaurants.map((r) => toGrid(r.lat, r.lng))
-    return DECOS.filter((d) => spots.every((s) => Math.hypot(d.g[0] - s.gx, d.g[1] - s.gy) > 1.15))
-  }, [restaurants])
+    const taken = [...spots.values()]
+    return DECOS.filter((d) => taken.every((s) => Math.hypot(d.g[0] - s.gx, d.g[1] - s.gy) > 1.15))
+  }, [spots])
 
   const ordered = useMemo(() => [...restaurants].sort((a, b) => {
-    const ga = toGrid(a.lat, a.lng)
-    const gb = toGrid(b.lat, b.lng)
+    const ga = spots.get(a.id)!
+    const gb = spots.get(b.id)!
     return ga.gx + ga.gy - (gb.gx + gb.gy)
-  }), [restaurants])
+  }), [restaurants, spots])
 
   // The player's avatar walks to the chosen restaurant.
   const home = useMemo(() => {
@@ -211,7 +215,7 @@ export function TownMap({
     return px(g.gx + 0.4, g.gy + 0.4)
   }, [player?.area])
   const selected = restaurants.find((r) => r.id === selectedId)
-  const target = selected ? doorstep(selected) : home
+  const target = selected ? doorstep(selected, spots.get(selected.id)) : home
   const [walking, setWalking] = useState(false)
   const [greet, setGreet] = useState(true)
   useEffect(() => {
@@ -242,7 +246,7 @@ export function TownMap({
               </g>
             ))}
           {ordered.map((r) => (
-            <Building key={r.id} r={r} state={states[r.id] ?? 'none'} selected={r.id === selectedId} faded={!!faded?.has(r.id)} onTap={() => onSelect(r)} />
+            <Building key={r.id} r={r} at={spots.get(r.id)} grey={!!grey?.has(r.id)} selected={r.id === selectedId} faded={!!faded?.has(r.id)} onTap={() => onSelect(r)} />
           ))}
           {player && (
             <g className="map-walk" style={{ transform: `translate(${target.x}px, ${target.y}px)` }}>
@@ -257,36 +261,21 @@ export function TownMap({
         </svg>
         {labels && (
           <div className="pointer-events-none absolute inset-0">
-            {DISTRICTS.map((d) => {
-              const p = px(d.at[0], d.at[1])
-              return (
-                <div key={d.name} className="absolute origin-bottom" style={{ left: p.x, top: p.y, transform: 'translate(-50%, -50%) scale(var(--inv))' }}>
-                  <span className="rounded-full bg-white/70 px-2 py-0.5 text-[12px] font-bold whitespace-nowrap text-ink/55">
-                    {d.icon} {d.name}
-                  </span>
-                </div>
-              )
-            })}
             {ordered.map((r) => {
-              const top = buildingTop(r)
-              const base = buildingBase(r)
-              const st = states[r.id] ?? 'none'
+              const sign = signOf(r, spots.get(r.id))
+              const base = buildingBase(r, spots.get(r.id))
               const pts = points?.[r.id] ?? 0
               const dim = faded?.has(r.id)
               return (
                 <div key={r.id} style={{ opacity: dim ? 0.35 : 1 }}>
-                  {st !== 'none' && (
+                  {marks?.has(r.id) && (
                     <button
-                      className="pointer-events-auto absolute origin-bottom"
-                      style={{ left: top.x, top: top.y, transform: 'translate(-50%, -100%) scale(var(--inv))' }}
+                      className="pointer-events-auto absolute"
+                      style={{ left: sign.x + 13, top: sign.y - 13, transform: 'translate(-50%, -50%) scale(var(--inv))' }}
                       onClick={() => onSelect(r)}
-                      aria-label={`${r.name} hiring`}
+                      aria-label={r.name}
                     >
-                      {st === 'new' ? (
-                        <span className="anim-wiggle inline-block rounded-full bg-sun px-2 py-0.5 text-[13px] font-extrabold text-ink shadow-pop">NEW</span>
-                      ) : (
-                        <span className="anim-float inline-flex h-7 w-7 items-center justify-center rounded-full bg-mint text-lg font-extrabold text-white shadow-pop">!</span>
-                      )}
+                      <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-full bg-mint text-[14px] font-extrabold text-white ring-2 ring-white">!</span>
                     </button>
                   )}
                   <button

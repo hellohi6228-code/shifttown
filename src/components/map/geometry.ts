@@ -1,11 +1,11 @@
 import { GH, GW, iso } from '../../lib/geo'
 
-/** Map canvas in map pixels; grid (0,0) sits at (OX, OY). */
-export const OX = 808
-export const OY = 160
-export const MAP_W = 1616
-export const MAP_H = 1010
-export const DEPTH = 34
+/** Map canvas in map pixels; grid (0,0) sits at (OX, OY). The town fills a
+ *  diamond in the middle; countryside, lake and roads run out to every edge. */
+export const OX = 1000
+export const OY = 420
+export const MAP_W = 2000
+export const MAP_H = 1600
 
 export type G = [number, number]
 

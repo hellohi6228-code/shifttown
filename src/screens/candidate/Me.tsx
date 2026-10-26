@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react'
 import type { Profile } from '../../types'
 import { useStore } from '../../store'
 import { area } from '../../lib/geo'
-import { BADGES, badges, level, oppOf, pointsAt, stage, STAGES } from '../../lib/rules'
+import { BADGES, badges, level, oppOf, pointsAt, rating, title, unlocked } from '../../lib/rules'
 import { fmtDay, fmtDuration, minutes } from '../../lib/time'
 import { Avatar } from '../../components/Avatar'
 import { AvatarEditor } from '../../components/AvatarEditor'
@@ -83,16 +83,17 @@ export function Me() {
   const lv = level(mine.length)
   const earned = badges(snap, me.id)
   const done = snap.bookings
-    .filter((b) => b.candidateId === me.id && (b.status === 'attended' || b.status === 'no_show'))
+    .filter((b) => b.candidateId === me.id && b.status === 'done')
     .map((b) => ({ b, o: oppOf(snap, b)! }))
     .filter((x) => x.o)
     .sort((a, b) => +new Date(b.o.start) - +new Date(a.o.start))
-  const shifts = done.filter((x) => x.o.kind === 'shift' && x.b.status === 'attended')
-  const intros = done.filter((x) => x.o.kind !== 'shift' && x.b.status === 'attended')
+  const shifts = done.filter((x) => x.o.kind === 'shift')
+  const trainings = done.filter((x) => x.o.kind === 'training')
   const hours = Math.round(shifts.reduce((s, x) => s + minutes(x.o.start, x.o.end), 0) / 60)
+  const stars = rating(snap.reviews, me.id)
   const places = snap.restaurants
-    .map((r) => ({ r, st: stage(snap, r.id, me.id), pts: pointsAt(snap, r.id, me.id) }))
-    .filter((x) => x.st !== 'new' || x.pts > 0)
+    .filter((r) => unlocked(snap, r.id, me.id))
+    .map((r) => ({ r, pts: pointsAt(snap, r.id, me.id) }))
     .sort((a, b) => b.pts - a.pts)
 
   return (
@@ -118,11 +119,12 @@ export function Me() {
           </div>
         </div>
 
-        <div className="mt-4 grid grid-cols-3 gap-2">
+        <div className="mt-4 grid grid-cols-4 gap-2">
           {[
-            ['👋', intros.length, 'Intros'],
+            ['🎓', trainings.length, 'Trainings'],
             ['🍳', shifts.length, 'Shifts'],
             ['⏱️', hours, 'Hours'],
+            ['★', stars.avg === null ? '–' : stars.avg.toFixed(1), stars.count === 1 ? '1 review' : `${stars.count} reviews`],
           ].map(([icon, n, label]) => (
             <div key={label as string} className="flex flex-col items-center rounded-3xl bg-white py-2.5 shadow-soft">
               <span className="text-xl">{icon}</span>
@@ -149,13 +151,12 @@ export function Me() {
           </Section>
 
           {places.length > 0 && (
-            <Section icon="⭐" title="Places">
+            <Section icon="🔓" title="Unlocked">
               <div className="flex flex-col gap-2">
-                {places.map(({ r, st, pts }) => (
+                {places.map(({ r, pts }) => (
                   <div key={r.id} className="flex items-center gap-3 rounded-2xl bg-white px-3 py-2.5 shadow-soft">
                     <span className="text-2xl">{r.emoji}</span>
                     <span className="flex-1 truncate font-bold">{r.name}</span>
-                    <span title={st}>{STAGES.find((s) => s.id === st)?.icon}</span>
                     <span className="min-w-12 text-right font-extrabold text-sun-deep">⭐{pts}</span>
                   </div>
                 ))}
@@ -172,12 +173,12 @@ export function Me() {
                     <div key={b.id} className="flex items-center gap-2 rounded-2xl bg-white px-3 py-2 text-[15px] shadow-soft">
                       <span>{r?.emoji}</span>
                       <span className="flex-1 truncate font-bold">
-                        {o.kind === 'shift' ? o.role : o.kind === 'intro' ? 'Intro' : 'Training'} · {r?.name}
+                        {title(o)} · {r?.name}
                       </span>
                       <span className="text-muted">
                         {fmtDay(o.start)} · {fmtDuration(o.start, o.end)}
                       </span>
-                      <span>{b.status === 'attended' ? '✅' : '⚠️'}</span>
+                      <span>{snap.reviews.find((v) => v.bookingId === b.id) ? '★'.repeat(snap.reviews.find((v) => v.bookingId === b.id)!.stars) : '✅'}</span>
                     </div>
                   )
                 })}
@@ -207,9 +208,6 @@ export function Me() {
             </Btn>
             <Chip tone="lav" on={motion} onClick={() => setMotion(!motion)}>
               ✨ Motion
-            </Chip>
-            <Chip tone="mint" on={draft.discoverable} onClick={() => update({ discoverable: !draft.discoverable })}>
-              👀 Visible
             </Chip>
           </div>
           <DemoPanel />

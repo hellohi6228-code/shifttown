@@ -1,21 +1,22 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState, type ReactNode } from 'react'
-import type { Snapshot } from './types'
+import type { Restaurant, Snapshot } from './types'
 import { UserError, type Api, type Identity } from './data/api'
 import { LocalApi } from './data/localApi'
 import { SupabaseApi } from './data/supabaseApi'
-import { badges, BADGES } from './lib/rules'
+import { badges, BADGES, level } from './lib/rules'
 
 const url = import.meta.env.VITE_SUPABASE_URL as string | undefined
 const key = import.meta.env.VITE_SUPABASE_ANON_KEY as string | undefined
 const api: Api = url && key ? new SupabaseApi(url, key) : new LocalApi()
 
-const EMPTY: Snapshot = { me: null, myRestaurantIds: [], restaurants: [], opps: [], bookings: [], quests: [], eligibility: [], people: [], notes: [] }
+const EMPTY: Snapshot = { me: null, myRestaurantIds: [], restaurants: [], opps: [], bookings: [], quests: [], reviews: [], people: [], stats: {}, notes: [] }
 
 export type Mode = 'candidate' | 'manager'
 export interface Celebration {
   title: string
   sub?: string
   badge?: { icon: string; name: string }
+  building?: Restaurant
 }
 
 interface Store {
@@ -73,6 +74,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const [toast, setToast] = useState<Store['toast']>(null)
   const [celebration, celebrate] = useState<Celebration | null>(null)
   const prevBadges = useRef<Set<string> | null>(null)
+  const levels = useRef<Record<string, number> | null>(null)
   const modeRef = useRef(mode)
   modeRef.current = mode
 
@@ -85,7 +87,14 @@ export function StoreProvider({ children }: { children: ReactNode }) {
   const refresh = useCallback(async () => {
     const s = await api.load()
     setSnap(s)
-    if (!s.me || modeRef.current !== 'candidate') return
+    if (!s.me) return
+    // Restaurants level up as they finish trainings/shifts and review people.
+    const places = s.restaurants.filter((r) => s.myRestaurantIds.includes(r.id))
+    const lv = Object.fromEntries(places.map((r) => [r.id, level(r.xp).lv]))
+    const up = levels.current && places.find((r) => levels.current![r.id] !== undefined && lv[r.id] > levels.current![r.id])
+    levels.current = lv
+    if (up && modeRef.current === 'manager') return celebrate({ title: `Level ${lv[up.id]}!`, sub: up.name, building: up })
+    if (modeRef.current !== 'candidate') return
     // Celebrate quests and unlocks the candidate hasn't seen yet.
     let seen: string[] = []
     try {
@@ -93,15 +102,17 @@ export function StoreProvider({ children }: { children: ReactNode }) {
     } catch {
       seen = []
     }
-    const fresh = s.notes.filter((n) => !n.read && (n.kind === 'quest' || n.kind === 'eligible') && !seen.includes(n.id))
+    const fresh = s.notes.filter((n) => !n.read && (n.kind === 'quest' || n.kind === 'unlocked') && !seen.includes(n.id))
     const mine = badges(s, s.me.id)
     const newBadge = prevBadges.current ? BADGES.find((b) => mine.has(b.id) && !prevBadges.current!.has(b.id)) : undefined
     prevBadges.current = mine
     if (fresh.length) {
-      const q = fresh.find((n) => n.kind === 'quest') ?? fresh[0]
+      const q = fresh.find((n) => n.kind === 'unlocked') ?? fresh[0]
+      const place = s.restaurants.find((r) => r.id === q.restaurantId)
       celebrate({
-        title: q.kind === 'quest' ? 'Quest complete!' : 'Shifts unlocked!',
+        title: q.kind === 'unlocked' ? 'Store unlocked!' : 'Quest complete!',
         sub: q.text,
+        building: q.kind === 'unlocked' ? place : undefined,
         badge: newBadge ? { icon: newBadge.icon, name: newBadge.name } : undefined,
       })
       pref.set(seenKey, JSON.stringify([...seen, ...fresh.map((n) => n.id)].slice(-200)))
@@ -191,6 +202,7 @@ export function StoreProvider({ children }: { children: ReactNode }) {
 
   const resetSession = useCallback(() => {
     prevBadges.current = null
+    levels.current = null
     setIdentity(null)
     setSnap(EMPTY)
     api.restore().then(async (id) => {

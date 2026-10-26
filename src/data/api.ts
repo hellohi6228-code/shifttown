@@ -1,4 +1,4 @@
-import type { Booking, PostInput, Profile, ProfileInput, RegisterInput, Snapshot } from '../types'
+import type { PostInput, Profile, ProfileInput, RegisterInput, Snapshot } from '../types'
 
 export interface Identity {
   id: string
@@ -19,16 +19,17 @@ export interface Api {
   saveProfile(p: ProfileInput): Promise<void>
   checkCode(code: string): Promise<'new' | 'join' | 'invalid'>
   register(input: RegisterInput): Promise<string>
-  setAutoConfirm(restaurantId: string, on: boolean): Promise<void>
   post(input: PostInput): Promise<void>
   cancelOpp(oppId: string): Promise<void>
-  book(oppId: string): Promise<Booking['status']>
+  /** Candidate asks for a spot; the restaurant confirms. */
+  book(oppId: string): Promise<void>
   cancelBooking(bookingId: string): Promise<void>
-  decide(bookingId: string, approve: boolean): Promise<void>
-  attend(bookingId: string, attended: boolean, eligible?: boolean): Promise<void>
-  setEligible(restaurantId: string, candidateId: string, eligible: boolean): Promise<void>
-  invite(oppId: string, candidateId: string): Promise<void>
-  respond(bookingId: string, accept: boolean): Promise<void>
+  confirm(bookingId: string, yes: boolean): Promise<void>
+  /** Candidate or restaurant. */
+  checkIn(bookingId: string): Promise<void>
+  /** Candidate or restaurant. Finishing a training unlocks the store. */
+  checkOut(bookingId: string): Promise<void>
+  review(bookingId: string, stars: number): Promise<void>
   readNotes(): Promise<void>
   demo?: {
     people(): Profile[]

@@ -15,7 +15,7 @@ const CUISINES: [string, string][] = [
 const guessEmoji = (name: string) => {
   const n = name.toLowerCase()
   const hit = ([
-    [/pizz/, '🍕'], [/taco|taqu|mexic|burrito/, '🌮'], [/sushi|japan/, '🍣'], [/noodle|ramen|pho|udon/, '🍜'],
+    [/pizz/, '🍕'], [/taco|taqu|mexic|burrito/, '🌮'], [/sushi|japan|bento/, '🍱'], [/noodle|ramen|pho|udon/, '🍜'],
     [/burger|grill|diner/, '🍔'], [/caf|coffee|espresso|tea/, '☕'], [/bagel|bake|bread|donut/, '🥯'],
     [/curry|india|thai/, '🍛'], [/salad|green|farm/, '🥗'],
   ] as [RegExp, string][]).find(([re]) => re.test(n))
@@ -135,11 +135,11 @@ export function Register() {
             {api.mode === 'demo' && (
               <div className="flex flex-wrap items-center gap-2 rounded-2xl border-2 border-dashed border-lav bg-lav-soft/60 p-2.5 text-[14px] font-bold text-lav-deep">
                 DEMO
-                <button className="rounded-full bg-white px-3 py-1" onClick={() => (setCode(DEMO_CODES.newPlace), setLink('https://www.google.com/maps/place/Cascadilla+Curry+House,+412+Eddy+St,+Ithaca,+NY+14850/@42.4415,-76.4868,17z/data=!3m1!4b1!4m6!3m5!1s0x0:0x0!8m2!3d42.4413!4d-76.4866'))}>
+                <button className="rounded-full bg-white px-3 py-1" onClick={() => (setCode(DEMO_CODES.newPlace), setLink('https://www.google.com/maps/place/Fusia+Bento+Bar/data=!4m7!3m6!1s0x89d081dda066c2f5:0x457365105618cebc!8m2!3d42.4419131!4d-76.4851679!16s%2Fg%2F11lkjm12jh'))}>
                   🆕 New place
                 </button>
-                <button className="rounded-full bg-white px-3 py-1" onClick={() => setCode(DEMO_CODES.joinGorge)}>
-                  🍔 Join Gorge Grill
+                <button className="rounded-full bg-white px-3 py-1" onClick={() => setCode(DEMO_CODES.join)}>
+                  🍔 Join Ithaca Ale House
                 </button>
               </div>
             )}

@@ -1,9 +1,10 @@
 # ShiftTown — Ithaca
 
 Restaurant staffing for college towns, wrapped in a cozy isometric town.
-Candidates explore an illustrated Ithaca, meet restaurants, unlock shifts and
-earn restaurant-specific quest stars. Managers post intros and shifts, approve,
-record attendance and invite people back.
+Every store on the map starts grey. A candidate books that store's one training;
+once it's checked out the store turns to color and its shifts appear. Restaurants
+add training slots and shifts, confirm people, check them in and out, and review
+them — earning XP and levels for their store along the way.
 
 One codebase → iOS (App Store), Android (Google Play) and a web PWA.
 React + TypeScript + Tailwind, Capacitor for the native shells, Supabase
@@ -27,13 +28,16 @@ everything is labelled `DEMO`.
 | Demo code | What it does |
 |---|---|
 | `DEMO-NEW-1` (`-2`, `-3`) | Register a new restaurant (tap **🆕 New place** to prefill a Maps link) |
-| `DEMO-GORGE` | Join the demo *Gorge Grill* as a manager (pending requests + attendance to record) |
+| `DEMO-JOIN` | Join *Ithaca Ale House* as its owner in the demo (people to confirm, check in/out and review) |
 
 Me → **DEMO** panel lets you play as a demo candidate or reset the data.
 
-A full loop in under a minute: *Find shifts* → book the Gorge Grill intro →
-Me → *My restaurant* → `DEMO-GORGE` → approve → ✓🔓 → 🍳 back to town →
-quest celebration → shifts unlocked.
+The map shows real Collegetown and downtown restaurants at their Google Maps
+locations. Their training slots, shifts, pay and the people are demo data.
+
+A full loop in under a minute: *Find shifts* → tap the grey Ithaca Ale House → **Book**
+today's training → Me → *My restaurant* → `DEMO-JOIN` → **Confirm** → **Check in**
+→ **Check out** → ★★★★★ → 🍳 back to town → Ithaca Ale House is in color with its shifts.
 
 ## No login
 
@@ -79,29 +83,31 @@ npm run android   # build, sync, open Android Studio
 | Calendars | `src/components/Calendar.tsx`, `screens/candidate/Plans.tsx`, manager `Schedule` |
 | Candidate screens | `src/screens/candidate/*` |
 | Manager screens | `src/screens/manager/*` |
-| Booking / eligibility / matching / levels | `src/lib/rules.ts` (client) mirrored by `supabase/migrations/0001_init.sql` (server) |
+| Booking / unlock / check-in / levels | `src/lib/rules.ts` (client) mirrored by `supabase/migrations/0001_init.sql` (server) |
 | Backends | `src/data/localApi.ts` (demo), `src/data/supabaseApi.ts` (production) |
 
 **Rules enforced on the server** (Postgres functions with row locks, tables read-only via RLS):
 no double-booking a person, no overbooking an opening (`filled <= openings` is also a
-CHECK constraint), shifts require manager-granted eligibility and listed skills,
-training and shifts must be paid, attendance only from the day of the activity,
+CHECK constraint), every request waits for the restaurant to confirm, a store's
+shifts unlock only after its training is checked out, training and shifts are always
+paid, check-in opens an hour before start, one review per finished booking,
 invite codes hashed and single-use, a restaurant only ever sees quest stars earned
 at that restaurant.
 
-**Matching** is rule-based and explainable: availability, distance from the
-candidate’s chosen neighborhood (never an address), role, skills, clashes. No
-school, demographic or neighborhood-quality signals.
+**Ordering** of open slots is rule-based: availability, distance from the candidate’s
+chosen neighborhood (never an address), role, skills. No school, demographic or
+neighborhood-quality signals.
 
-**Levels** count finished quests (experience, not a rating). Badge criteria are shown
-on tap. Stars are never converted to money and pay is always shown on every card.
+**Levels** count finished trainings and shifts. Restaurants see a candidate's level,
+points at their store and average review; candidates see their own reviews in Me.
+Badge criteria are shown on tap. Stars are never converted to money and pay is always shown on every card.
 
 Animations respect the OS “reduce motion” setting and can be switched off in Me → ✨ Motion.
 
 ## Tests
 
 ```bash
-npm run test:sql   # 46 checks: runs the real migration in embedded Postgres (PGlite) as real client roles
+npm run test:sql   # 54 checks: runs the real migration in embedded Postgres (PGlite) as real client roles
 npm run typecheck
 ```
 

@@ -48,7 +48,7 @@ export function Welcome() {
   const pick = (m: Mode) => (platform === 'ios' ? setRole(m) : signIn(m))
   return (
     <div className="relative h-full overflow-hidden">
-      <TownMap restaurants={[]} states={{}} onSelect={() => {}} motion={motion} labels={false} />
+      <TownMap restaurants={[]} onSelect={() => {}} motion={motion} labels={false} />
       <div className="pointer-events-none absolute inset-0 bg-gradient-to-b from-cream/10 via-cream/40 to-cream" />
       <div className="pb-safe absolute inset-x-0 bottom-0 mx-auto flex max-w-md flex-col gap-4 px-5 pb-6">
         <div className="anim-pop">
@@ -90,7 +90,7 @@ export function Onboard() {
   const [where, setWhere] = useState('downtown')
   const candidate = mode === 'candidate'
   const save = () =>
-    act('onboard', () => api.saveProfile({ name, look, area: where, radiusMi: 2.5, slots, roles, skills: [], discoverable: candidate }), candidate ? 'Welcome to town! 🎉' : undefined)
+    act('onboard', () => api.saveProfile({ name, look, area: where, radiusMi: 2.5, slots, roles, skills: [] }), candidate ? 'Welcome to town! 🎉' : undefined)
 
   return (
     <div className="no-scrollbar h-full overflow-y-auto">

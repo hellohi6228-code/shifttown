@@ -16,11 +16,8 @@ const DOT: Record<CalTone, string> = {
 }
 
 export const LEGEND: { tone: CalTone; label: string }[] = [
-  { tone: 'sky', label: 'Intro' },
   { tone: 'lav', label: 'Training' },
   { tone: 'mint', label: 'Shift' },
-  { tone: 'sun', label: 'Pending' },
-  { tone: 'pink', label: 'Invite' },
   { tone: 'grey', label: 'Done' },
 ]
 

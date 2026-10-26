@@ -2,44 +2,42 @@
 // the Commons, East Hill (Cornell) and South Hill (Ithaca College).
 import { memo } from 'react'
 import { GH, GW } from '../../lib/geo'
-import { box, DEPTH, distToPolyline, inPolygon, line, mulberry, onLeft, onRight, px, pts, quad, rect, smooth, type G } from './geometry'
+import { box, distToPolyline, inPolygon, line, MAP_H, MAP_W, mulberry, onLeft, onRight, OX, OY, px, pts, quad, rect, smooth, type G } from './geometry'
 
-export const LAKE: G[] = [[2.6, -0.2], [15.4, -0.2], [15.2, 1.6], [14.4, 3.1], [12.6, 3.9], [10.2, 4.3], [8.2, 4.3], [6.9, 3.9], [5.6, 3.1], [4.3, 1.8], [3.2, 0.7]]
+/** Cayuga Lake runs north off the top of the map. */
+export const LAKE: G[] = [[0.2, -30], [14.5, -30], [16.2, -14], [16, -6], [15.4, -0.2], [15.2, 1.6], [14.4, 3.1], [12.6, 3.9], [10.2, 4.3], [8.2, 4.3], [6.9, 3.9], [5.6, 3.1], [4.3, 1.8], [3.2, 0.7], [2.2, -6], [1.2, -14]]
 export const CREEKS: { pts: G[]; w: number }[] = [
-  { pts: [[6.7, 4], [6.5, 6.5], [6.6, 9.5], [7, 12.5], [7.6, 15], [8.2, 17.5]], w: 20 },
-  { pts: [[24.3, 5.3], [21.5, 5.6], [18.6, 6.1], [16.8, 6.1], [15.3, 5.8], [14.3, 5.2], [13.8, 4.2], [13.6, 3.6]], w: 11 },
-  { pts: [[24.3, 9.2], [21, 8.9], [18.8, 8.7], [16.6, 9.0], [14.6, 9.2], [12, 8.8], [9.6, 8.3], [7.6, 7.9], [6.6, 7.9]], w: 8 },
-  { pts: [[24.3, 17.4], [21.5, 16.6], [18.5, 15.8], [15.8, 15.3], [13.2, 15.0], [10.8, 14.1], [8.8, 13.2], [7.1, 12.7]], w: 10 },
+  { pts: [[6.7, 4], [6.5, 6.5], [6.6, 9.5], [7, 12.5], [7.6, 15], [8.2, 17.5], [8.6, 30], [9.4, 50]], w: 20 },
+  { pts: [[50, 3.5], [36, 4.2], [24.3, 5.3], [21.5, 5.6], [18.6, 6.1], [16.8, 6.1], [15.3, 5.8], [14.3, 5.2], [13.8, 4.2], [13.6, 3.6]], w: 11 },
+  { pts: [[50, 8], [36, 8.6], [24.3, 9.2], [21, 8.9], [18.8, 8.7], [16.6, 9.0], [14.6, 9.2], [12, 8.8], [9.6, 8.3], [7.6, 7.9], [6.6, 7.9]], w: 8 },
+  { pts: [[50, 22], [36, 19.5], [24.3, 17.4], [21.5, 16.6], [18.5, 15.8], [15.8, 15.3], [13.2, 15.0], [10.8, 14.1], [8.8, 13.2], [7.1, 12.7]], w: 10 },
 ]
 export const ROADS: G[][] = [
-  [[0, 10.9], [4, 11.4], [9.6, 11.4], [12.4, 11.4]],
-  [[14.8, 11.4], [16.2, 11.4], [17.9, 10.6], [24, 10.4]],
-  [[10, 4.8], [9.6, 7], [9.6, 24]],
-  [[13.2, 4.4], [13.2, 19], [14.1, 24]],
+  [[-30, 10.2], [0, 10.9], [4, 11.4], [9.6, 11.4], [12.4, 11.4]],
+  [[14.8, 11.4], [16.2, 11.4], [17.9, 10.6], [24, 10.4], [50, 9.8]],
+  [[10, 4.8], [9.6, 7], [9.6, 24], [9.2, 50]],
+  [[13.2, 4.4], [13.2, 19], [14.1, 24], [15.4, 50]],
   [[17.9, 6.6], [17.9, 14.5]],
-  [[13.2, 8], [15.8, 7.4], [18.8, 6.8], [22.8, 6.9]],
-  [[17.9, 12.7], [24, 12.9]],
+  [[13.2, 8], [15.8, 7.4], [18.8, 6.8], [22.8, 6.9], [50, 6.4]],
+  [[17.9, 12.7], [24, 12.9], [50, 14]],
   [[9.6, 17.6], [13.2, 17.6]],
-  [[0, 6.6], [3.2, 7.2], [6.6, 7.4], [9.6, 7]],
+  [[-30, 5.6], [0, 6.6], [3.2, 7.2], [6.6, 7.4], [9.6, 7]],
+  [[13.2, 4.4], [16.9, 0.8], [17.6, -14], [18.2, -32]],
+  [[6.6, 7.4], [2.6, 4.4], [-0.6, -6], [-1.8, -32]],
 ]
 /** The Commons pedestrian mall (State St between Cayuga and Aurora). */
-const COMMONS: G[] = rect(12.4, 10.85, 14.8, 11.95)
-const CAMPUS: G[] = [[18.6, 2.8], [24, 2.8], [24, 8.2], [19.4, 8.3], [18.6, 7.2]]
-const IC: G[] = [[12.2, 20.4], [17.6, 20.2], [17.8, 24], [12.6, 24]]
+export const COMMONS: G[] = rect(12.4, 10.85, 14.8, 11.95)
+export const CAMPUS: G[] = [[18.6, 2.8], [24, 2.8], [24, 8.2], [19.4, 8.3], [18.6, 7.2]]
+export const IC: G[] = [[12.2, 20.4], [17.6, 20.2], [17.8, 24], [12.6, 24]]
 const DOWNTOWN: G[] = rect(10.1, 9.6, 16.6, 13.6)
 
-export const DISTRICTS = [
-  { name: 'Cayuga Lake', at: [9.5, 1.6] as G, icon: '⛵' },
-  { name: 'Cornell', at: [21.2, 3.4] as G, icon: '🏛️' },
-  { name: 'Collegetown', at: [20.5, 10.9] as G, icon: '🎒' },
-  { name: 'The Commons', at: [13.6, 12.4] as G, icon: '🛍️' },
-  { name: 'Fall Creek', at: [11.6, 5.7] as G, icon: '🌊' },
-  { name: 'Ithaca College', at: [15.2, 20.0] as G, icon: '🎓' },
-  { name: 'West Hill', at: [2.6, 13.5] as G, icon: '⛰️' },
-  { name: 'Ithaca Falls', at: [15.6, 4.8] as G, icon: '💦' },
-]
+/** Is this grid point on the drawn canvas? */
+const onCanvas = ([gx, gy]: G, pad = 20) => {
+  const p = px(gx, gy)
+  return p.x > pad && p.x < MAP_W - pad && p.y > pad && p.y < MAP_H - pad
+}
 
-const LANDMARK_SPOTS: G[] = [[20.4, 5.4], [19.2, 4.1], [21.9, 4.4], [22.2, 6.5], [14.9, 21.6], [16, 22.6], [8.6, 5.4], [6.9, 3.9], [13.6, 11.4], [15.3, 5.9]]
+export const LANDMARK_SPOTS: G[] = [[20.4, 5.4], [19.2, 4.1], [21.9, 4.4], [22.2, 6.5], [14.9, 21.6], [16, 22.6], [8.6, 5.4], [6.9, 3.9], [13.6, 11.4], [15.3, 5.9]]
 
 export interface Deco {
   kind: 'house' | 'tree' | 'pine' | 'bloom'
@@ -70,6 +68,16 @@ export const DECOS: Deco[] = (() => {
       }
       if (r < (town ? 0.62 : 0.32)) out.push({ kind: 'house', g, v: rnd() })
       else if (r < (town ? 0.8 : 0.78)) out.push({ kind: rnd() < 0.2 ? 'bloom' : rnd() < 0.5 ? 'pine' : 'tree', g, v: rnd() })
+    }
+  }
+  // Countryside out to the edges: mostly trees, a few farmhouses.
+  for (let x = -26; x < 50; x += 1.3) {
+    for (let y = -30; y < 50; y += 1.3) {
+      if (x > -0.5 && x < GW + 0.5 && y > -0.5 && y < GH + 0.5) continue
+      const g: G = [x + (rnd() - 0.5) * 0.6, y + (rnd() - 0.5) * 0.6]
+      const r = rnd()
+      if (!onCanvas(g) || busy(g, 0.4) || r > 0.34) continue
+      out.push({ kind: r < 0.04 ? 'house' : rnd() < 0.45 ? 'pine' : rnd() < 0.15 ? 'bloom' : 'tree', g, v: rnd() })
     }
   }
   // Campus and park trees
@@ -291,29 +299,23 @@ function Fountain() {
 
 /** Static terrain + scenery. Rendered once. */
 export const Scene = memo(function Scene({ decos }: { decos: Deco[] }) {
-  const T = px(0, 0)
-  const R = px(GW, 0)
-  const B = px(GW, GH)
-  const L = px(0, GH)
-  const tiles: string[] = []
-  for (let x = 0; x < GW; x++) for (let y = 0; y < GH; y++) if ((x + y) % 2 === 0) tiles.push(pts([[x, y], [x + 1, y], [x + 1, y + 1], [x, y + 1]]))
   return (
     <g>
-      {/* island sides */}
-      <polygon points={`${L.x},${L.y} ${B.x},${B.y} ${B.x},${B.y + DEPTH} ${L.x},${L.y + DEPTH}`} fill="#F4D6AE" />
-      <polygon points={`${B.x},${B.y} ${R.x},${R.y} ${R.x},${R.y + DEPTH} ${B.x},${B.y + DEPTH}`} fill="#E9C597" />
-      <polygon points={`${L.x},${L.y} ${B.x},${B.y} ${B.x},${B.y + 8} ${L.x},${L.y + 8}`} fill="#8FD8A6" />
-      <polygon points={`${B.x},${B.y} ${R.x},${R.y} ${R.x},${R.y + 8} ${B.x},${B.y + 8}`} fill="#7CCB97" />
-      {/* grass */}
-      <polygon points={`${T.x},${T.y} ${R.x},${R.y} ${B.x},${B.y} ${L.x},${L.y}`} fill="#CDF1D8" />
-      <path d={tiles.map((t) => `M${t.replace(/ /g, ' L')}Z`).join('')} fill="#C2ECCF" />
+      {/* grass tiles, edge to edge (one iso checker pattern) */}
+      <defs>
+        <pattern id="st-tiles" width="64" height="32" patternUnits="userSpaceOnUse" x={(OX - 32) % 64} y={OY % 32}>
+          <rect width="64" height="32" fill="#CDF1D8" />
+          <polygon points="32,0 64,16 32,32 0,16" fill="#C2ECCF" />
+        </pattern>
+      </defs>
+      <rect width={MAP_W} height={MAP_H} fill="url(#st-tiles)" />
       {/* districts */}
       <polygon points={pts(CAMPUS)} fill="#DDF6D2" stroke="#fff" strokeWidth="3" strokeLinejoin="round" />
       <polygon points={pts(IC)} fill="#DDF6D2" stroke="#fff" strokeWidth="3" strokeLinejoin="round" />
       <polygon points={pts(DOWNTOWN)} fill="#FFF7E9" stroke="#fff" strokeWidth="4" strokeLinejoin="round" />
       {/* water */}
       <path d={smooth(LAKE, true)} fill="#A6DEFF" stroke="#E2F5FF" strokeWidth="6" />
-      {[[6.2, 1.2], [11, 0.9], [12.5, 2.6], [8.8, 2.9]].map(([x, y], i) => {
+      {[[6.2, 1.2], [11, 0.9], [12.5, 2.6], [8.8, 2.9], [7, -6], [11.5, -9], [5, -14], [10, -18]].map(([x, y], i) => {
         const p = px(x, y)
         return <path key={i} d={`M${p.x - 12} ${p.y} q6 -5 12 0 q6 5 12 0`} stroke="#fff" strokeWidth="2.5" fill="none" strokeLinecap="round" opacity="0.8" />
       })}

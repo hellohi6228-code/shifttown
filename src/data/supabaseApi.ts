@@ -1,7 +1,7 @@
 // Production backend. Reads go straight to tables (filtered by RLS);
 // every write is a Postgres function that enforces the booking rules under row locks.
 import { createClient, type SupabaseClient } from '@supabase/supabase-js'
-import type { Booking, Eligibility, Note, Opportunity, PostInput, Profile, ProfileInput, Quest, RegisterInput, Restaurant, Snapshot } from '../types'
+import type { Booking, CandidateStats, Note, Opportunity, PostInput, Profile, ProfileInput, Quest, RegisterInput, Restaurant, Review, Snapshot } from '../types'
 import { isNative, nativeSignIn } from '../auth/native'
 import { DAY } from '../lib/time'
 import { fail, type Api, type Identity } from './api'
@@ -11,23 +11,23 @@ type Row = Record<string, any>
 
 const toProfile = (r: Row): Profile => ({
   id: r.id, name: r.name, look: r.look, area: r.area, radiusMi: Number(r.radius_mi),
-  slots: r.slots ?? [], roles: r.roles ?? [], skills: r.skills ?? [], discoverable: r.discoverable,
+  slots: r.slots ?? [], roles: r.roles ?? [], skills: r.skills ?? [],
 })
 const toRestaurant = (r: Row): Restaurant => ({
   id: r.id, name: r.name, cuisine: r.cuisine, emoji: r.emoji, address: r.address, lat: r.lat, lng: r.lng,
-  mapsUrl: r.maps_url, color: r.color, autoConfirm: r.auto_confirm, createdAt: r.created_at,
+  mapsUrl: r.maps_url, color: r.color, xp: r.xp, createdAt: r.created_at,
 })
 const toOpp = (r: Row): Opportunity => ({
   id: r.id, restaurantId: r.restaurant_id, kind: r.kind, role: r.role, start: r.starts_at, end: r.ends_at,
   openings: r.openings, filled: r.filled, payCents: r.pay_cents, skills: r.skills ?? [], notes: r.notes,
-  deadline: r.deadline, awardsPoint: r.awards_point, cancelled: r.cancelled, createdAt: r.created_at,
+  deadline: r.deadline, cancelled: r.cancelled, createdAt: r.created_at,
 })
 const toBooking = (r: Row): Booking => ({
-  id: r.id, oppId: r.opportunity_id, candidateId: r.candidate_id, status: r.status, source: r.source,
-  createdAt: r.created_at, updatedAt: r.updated_at,
+  id: r.id, oppId: r.opportunity_id, candidateId: r.candidate_id, status: r.status,
+  checkInAt: r.check_in_at ?? undefined, checkOutAt: r.check_out_at ?? undefined, createdAt: r.created_at, updatedAt: r.updated_at,
 })
 const toQuest = (r: Row): Quest => ({ id: r.id, restaurantId: r.restaurant_id, candidateId: r.candidate_id, bookingId: r.booking_id, kind: r.kind, at: r.created_at })
-const toElig = (r: Row): Eligibility => ({ restaurantId: r.restaurant_id, candidateId: r.candidate_id, eligible: r.eligible })
+const toReview = (r: Row): Review => ({ id: r.id, bookingId: r.booking_id, restaurantId: r.restaurant_id, candidateId: r.candidate_id, stars: r.stars, at: r.created_at })
 const toNote = (r: Row): Note => ({
   id: r.id, userId: r.user_id, kind: r.kind, text: r.text, oppId: r.opportunity_id ?? undefined,
   bookingId: r.booking_id ?? undefined, restaurantId: r.restaurant_id ?? undefined, read: r.read, at: r.created_at,
@@ -91,15 +91,16 @@ export class SupabaseApi implements Api {
   async load(): Promise<Snapshot> {
     const uid = this.uid ?? fail('Sign in first')
     const since = new Date(Date.now() - 60 * DAY).toISOString()
-    const [me, members, restaurants, opps, bookings, quests, elig, people, notes] = await Promise.all([
+    const [me, members, restaurants, opps, bookings, quests, reviews, people, stats, notes] = await Promise.all([
       this.rows(this.sb.from('profiles').select('*').eq('id', uid)),
       this.rows(this.sb.from('restaurant_members').select('restaurant_id').eq('user_id', uid)),
       this.rows(this.sb.from('restaurants').select('*')),
       this.rows(this.sb.from('opportunities').select('*').gte('ends_at', since).order('starts_at')),
       this.rows(this.sb.from('bookings').select('*')),
       this.rows(this.sb.from('quests').select('*')),
-      this.rows(this.sb.from('eligibility').select('*')),
+      this.rows(this.sb.from('reviews').select('*')),
       this.rows(this.sb.from('profiles').select('*').neq('id', uid).limit(500)),
+      this.rows(this.sb.rpc('candidate_stats')),
       this.rows(this.sb.from('notifications').select('*').order('created_at', { ascending: false }).limit(60)),
     ])
     return {
@@ -109,8 +110,9 @@ export class SupabaseApi implements Api {
       opps: opps.map(toOpp),
       bookings: bookings.map(toBooking),
       quests: quests.map(toQuest),
-      eligibility: elig.map(toElig),
+      reviews: reviews.map(toReview),
       people: people.map(toProfile),
+      stats: Object.fromEntries(stats.map((x): [string, CandidateStats] => [x.candidate_id, { quests: x.quests, rating: x.rating === null ? null : Number(x.rating), reviews: x.reviews }])),
       notes: notes.map(toNote),
     }
   }
@@ -119,7 +121,7 @@ export class SupabaseApi implements Api {
     const uid = this.uid ?? fail('Sign in first')
     const { error } = await this.sb.from('profiles').upsert({
       id: uid, name: p.name.trim().slice(0, 24) || 'Friend', look: p.look, area: p.area, radius_mi: p.radiusMi,
-      slots: p.slots, roles: p.roles, skills: p.skills, discoverable: p.discoverable,
+      slots: p.slots, roles: p.roles, skills: p.skills,
     })
     if (error) fail(error.message)
   }
@@ -132,39 +134,32 @@ export class SupabaseApi implements Api {
       p_lat: i.lat, p_lng: i.lng, p_cuisine: i.cuisine, p_emoji: i.emoji,
     })
 
-  setAutoConfirm = async (restaurantId: string, on: boolean) => {
-    await this.rpc('set_auto_confirm', { p_restaurant: restaurantId, p_on: on })
-  }
-
   post = async (p: PostInput) => {
     await this.rpc('post_opportunity', {
       p_restaurant: p.restaurantId, p_kind: p.kind, p_role: p.role, p_start: p.start, p_end: p.end,
-      p_openings: p.openings, p_pay_cents: p.payCents, p_skills: p.skills, p_notes: p.notes,
-      p_deadline: p.deadline, p_awards_point: p.awardsPoint,
+      p_openings: p.openings, p_pay_cents: p.payCents, p_skills: p.skills, p_notes: p.notes, p_deadline: p.deadline,
     })
   }
-
   cancelOpp = async (oppId: string) => {
     await this.rpc('cancel_opportunity', { p_opp: oppId })
   }
-  book = (oppId: string) => this.rpc<Booking['status']>('book', { p_opp: oppId })
+  book = async (oppId: string) => {
+    await this.rpc('book', { p_opp: oppId })
+  }
   cancelBooking = async (id: string) => {
     await this.rpc('cancel_booking', { p_booking: id })
   }
-  decide = async (id: string, approve: boolean) => {
-    await this.rpc('decide_booking', { p_booking: id, p_approve: approve })
+  confirm = async (id: string, yes: boolean) => {
+    await this.rpc('confirm_booking', { p_booking: id, p_yes: yes })
   }
-  attend = async (id: string, attended: boolean, eligible?: boolean) => {
-    await this.rpc('record_attendance', { p_booking: id, p_attended: attended, p_eligible: eligible ?? null })
+  checkIn = async (id: string) => {
+    await this.rpc('check_in', { p_booking: id })
   }
-  setEligible = async (restaurantId: string, candidateId: string, eligible: boolean) => {
-    await this.rpc('set_eligibility', { p_restaurant: restaurantId, p_candidate: candidateId, p_eligible: eligible })
+  checkOut = async (id: string) => {
+    await this.rpc('check_out', { p_booking: id })
   }
-  invite = async (oppId: string, candidateId: string) => {
-    await this.rpc('invite_candidate', { p_opp: oppId, p_candidate: candidateId })
-  }
-  respond = async (id: string, accept: boolean) => {
-    await this.rpc('respond_invite', { p_booking: id, p_accept: accept })
+  review = async (id: string, stars: number) => {
+    await this.rpc('review_candidate', { p_booking: id, p_stars: stars })
   }
   readNotes = async () => {
     await this.rpc('read_notes')

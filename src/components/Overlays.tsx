@@ -1,10 +1,11 @@
 import { useEffect, useMemo, useState } from 'react'
 import type { NoteKind } from '../types'
 import { useStore } from '../store'
-import { bookingFor, oppOf } from '../lib/rules'
+import { oppOf } from '../lib/rules'
 import { ago, fmtDay, fmtTime, HOUR } from '../lib/time'
 import { Avatar } from './Avatar'
-import { Btn, Empty, Icon, Sheet } from './ui'
+import { MiniBuilding } from './RestaurantSheet'
+import { Empty, Icon, Sheet } from './ui'
 
 export function Toast() {
   const { toast } = useStore()
@@ -40,7 +41,13 @@ export function Celebrate() {
     <div className="anim-fade fixed inset-0 z-50 flex items-center justify-center bg-ink/35 p-6" onClick={() => celebrate(null)}>
       {motion && bits.map((b, i) => <span key={i} className="confetti" style={{ left: `${b.left}%`, background: b.color, animationDelay: `${b.delay}s`, rotate: `${b.rot}deg` }} />)}
       <div className="anim-pop flex w-full max-w-xs flex-col items-center rounded-[32px] bg-cream px-6 pt-4 pb-6 text-center shadow-lift">
-        <Avatar look={snap.me.look} size={120} anim="jump" />
+        {celebration.building ? (
+          <div className="anim-float">
+            <MiniBuilding r={celebration.building} size={120} />
+          </div>
+        ) : (
+          <Avatar look={snap.me.look} size={120} anim="jump" />
+        )}
         <div className="mt-1 text-3xl font-extrabold">{celebration.title}</div>
         {celebration.sub && <div className="mt-1 text-lg font-bold text-sun-deep">{celebration.sub}</div>}
         {celebration.badge && (
@@ -55,8 +62,8 @@ export function Celebrate() {
 }
 
 const NOTE_ICON: Record<NoteKind, string> = {
-  booked: '✅', request: '🙋', approved: '✅', declined: '🙅', invite: '✉️', quest: '⭐', cancelled: '🚫',
-  eligible: '🔓', noshow: '⚠️', withdrawn: '↩️', accepted: '🤝',
+  request: '🙋', confirmed: '✅', declined: '🙅', cancelled: '🚫', withdrawn: '↩️',
+  checkin: '🟢', checkout: '👋', quest: '⭐', unlocked: '🔓', review: '★',
 }
 
 export function Bell({ onOpen }: { onOpen: () => void }) {
@@ -73,7 +80,7 @@ export function Bell({ onOpen }: { onOpen: () => void }) {
 }
 
 export function Notifications({ open, onClose }: { open: boolean; onClose: () => void }) {
-  const { snap, api, act, busy, refresh } = useStore()
+  const { snap, api, refresh } = useStore()
   const me = snap.me
   useEffect(() => {
     if (open && snap.notes.some((n) => !n.read)) {
@@ -104,8 +111,6 @@ export function Notifications({ open, onClose }: { open: boolean; onClose: () =>
         })}
         {snap.notes.length === 0 && !reminders.length && <Empty icon="📭" text="All quiet" />}
         {snap.notes.map((n) => {
-          const inv = n.kind === 'invite' && n.oppId ? bookingFor(snap, n.oppId, me.id) : undefined
-          const key = `note-${n.id}`
           return (
             <div key={n.id} className={`flex items-center gap-3 rounded-2xl p-3 ${n.read ? 'bg-white' : 'bg-pink-soft'}`}>
               <span className="text-2xl">{NOTE_ICON[n.kind] ?? '•'}</span>
@@ -113,16 +118,6 @@ export function Notifications({ open, onClose }: { open: boolean; onClose: () =>
                 <div className="text-[15px] leading-snug font-bold">{n.text}</div>
                 <div className="text-[13px] text-muted">{ago(n.at)}</div>
               </div>
-              {inv?.status === 'invited' && (
-                <div className="flex gap-1.5">
-                  <Btn size="sm" tone="white" loading={busy === key} onClick={() => act(key, () => api.respond(inv.id, false), 'Declined')} label="Decline">
-                    ✕
-                  </Btn>
-                  <Btn size="sm" tone="mint" loading={busy === key} onClick={() => act(key, () => api.respond(inv.id, true), 'Booked! 🎉')}>
-                    ✓
-                  </Btn>
-                </div>
-              )}
             </div>
           )
         })}

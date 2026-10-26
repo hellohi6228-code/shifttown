@@ -1,13 +1,17 @@
--- ShiftTown — restaurants, opportunities, bookings, quests.
+-- ShiftTown — restaurants, training slots, shifts, bookings, check-in/out, reviews.
 --
 -- Clients can only READ tables (filtered by row-level security).
 -- Every write goes through a SECURITY DEFINER function below that checks the
--- caller, validates the booking rules and takes row locks, so two people can
--- never claim the same last spot and nobody can double-book themselves.
+-- caller, validates the rules and takes row locks, so two people can never
+-- claim the same last spot and nobody can double-book themselves.
 -- The same rules live in src/lib/rules.ts for instant feedback in the app.
+--
+-- Flow: a store's training unlocks its shifts. Every request waits for the
+-- restaurant to confirm. Candidate or restaurant checks in and out; checking
+-- out finishes it (+1 quest point at that store, +1 XP for the store).
 
-create type kind as enum ('intro', 'training', 'shift');
-create type booking_status as enum ('invited', 'pending', 'confirmed', 'declined', 'cancelled', 'attended', 'no_show');
+create type kind as enum ('training', 'shift');
+create type booking_status as enum ('pending', 'confirmed', 'checked_in', 'done', 'declined', 'cancelled');
 
 -- ───────────────────────── tables ─────────────────────────
 
@@ -21,7 +25,6 @@ create table profiles (
   slots text[] not null default '{}',
   roles text[] not null default '{}',
   skills text[] not null default '{}',
-  discoverable boolean not null default true,
   created_at timestamptz not null default now()
 );
 
@@ -35,7 +38,7 @@ create table restaurants (
   lng double precision not null check (lng between -76.53 and -76.47),
   maps_url text not null,
   color text not null default '#FF8FB1',
-  auto_confirm boolean not null default true,
+  xp int not null default 0,
   created_by uuid references auth.users (id),
   created_at timestamptz not null default now()
 );
@@ -67,17 +70,15 @@ create table opportunities (
   ends_at timestamptz not null,
   openings int not null check (openings between 1 and 50),
   filled int not null default 0,
-  pay_cents int not null check (pay_cents >= 0),
+  -- training and shifts are always paid; points never replace wages
+  pay_cents int not null check (pay_cents > 0),
   skills text[] not null default '{}',
   notes text not null default '' check (char_length(notes) <= 200),
   deadline timestamptz not null,
-  awards_point boolean not null default true,
   cancelled boolean not null default false,
   created_at timestamptz not null default now(),
   check (ends_at > starts_at and ends_at - starts_at <= interval '12 hours'),
   check (deadline <= starts_at),
-  -- training and real shifts are always paid; points never replace wages
-  check (kind = 'intro' or pay_cents > 0),
   -- last line of defense against overbooking
   check (filled >= 0 and filled <= openings)
 );
@@ -88,17 +89,17 @@ create table bookings (
   id uuid primary key default gen_random_uuid(),
   opportunity_id uuid not null references opportunities (id) on delete cascade,
   candidate_id uuid not null references profiles (id) on delete cascade,
-  status booking_status not null,
-  source text not null default 'self' check (source in ('self', 'invite')),
+  status booking_status not null default 'pending',
+  check_in_at timestamptz,
+  check_out_at timestamptz,
   created_at timestamptz not null default now(),
   updated_at timestamptz not null default now()
 );
 create unique index bookings_one_live on bookings (opportunity_id, candidate_id)
-  where status in ('invited', 'pending', 'confirmed', 'attended', 'no_show');
+  where status in ('pending', 'confirmed', 'checked_in', 'done');
 create index on bookings (candidate_id);
 
--- One row per completed qualifying quest, always tied to ONE restaurant.
--- There is deliberately no cross-restaurant score.
+-- One row per finished training/shift, always tied to ONE restaurant.
 create table quests (
   id uuid primary key default gen_random_uuid(),
   restaurant_id uuid not null references restaurants (id) on delete cascade,
@@ -110,14 +111,17 @@ create table quests (
 create index on quests (candidate_id);
 create index on quests (restaurant_id);
 
-create table eligibility (
+-- A restaurant's 1–5 star review of a finished training/shift.
+create table reviews (
+  id uuid primary key default gen_random_uuid(),
+  booking_id uuid not null unique references bookings (id) on delete cascade,
   restaurant_id uuid not null references restaurants (id) on delete cascade,
   candidate_id uuid not null references profiles (id) on delete cascade,
-  eligible boolean not null,
-  updated_by uuid,
-  updated_at timestamptz not null default now(),
-  primary key (restaurant_id, candidate_id)
+  stars int not null check (stars between 1 and 5),
+  created_by uuid references auth.users (id),
+  created_at timestamptz not null default now()
 );
+create index on reviews (candidate_id);
 
 create table notifications (
   id uuid primary key default gen_random_uuid(),
@@ -139,11 +143,6 @@ language sql stable security definer set search_path = public as $$
   select exists (select 1 from restaurant_members where restaurant_id = r and user_id = auth.uid())
 $$;
 
-create function is_manager() returns boolean
-language sql stable security definer set search_path = public as $$
-  select exists (select 1 from restaurant_members where user_id = auth.uid())
-$$;
-
 create function require_uid() returns uuid
 language plpgsql stable as $$
 begin
@@ -153,7 +152,7 @@ end $$;
 
 create function opp_label(o opportunities) returns text
 language sql stable as $$
-  select (case when o.role = 'Any' then 'Intro' else o.role end) || ' · '
+  select (case when o.kind = 'training' then 'Training' else o.role end) || ' · '
     || to_char(o.starts_at at time zone 'America/New_York', 'Dy Mon FMDD FMHH12:MI AM')
 $$;
 
@@ -168,73 +167,57 @@ language sql security definer set search_path = public as $$
   select user_id, k, t, o, r from restaurant_members where restaurant_id = r
 $$;
 
+/** A store is unlocked for a candidate once they finish its training. */
+create function is_unlocked(r uuid, c uuid) returns boolean
+language sql stable security definer set search_path = public as $$
+  select exists (
+    select 1 from bookings b join opportunities o on o.id = b.opportunity_id
+    where b.candidate_id = c and b.status = 'done' and o.restaurant_id = r and o.kind = 'training'
+  )
+$$;
+
 -- Same checks as check() in src/lib/rules.ts. Caller must hold the profile and opportunity locks.
-create function assert_can_take(me profiles, o opportunities, via_invite boolean) returns void
+create function assert_can_take(me profiles, o opportunities) returns void
 language plpgsql stable set search_path = public as $$
 declare
   missing text;
 begin
   if o.cancelled then raise exception 'Cancelled'; end if;
   if now() >= o.starts_at then raise exception 'Started'; end if;
-  if not via_invite and now() > o.deadline then raise exception 'Closed'; end if;
+  if now() > o.deadline then raise exception 'Closed'; end if;
   if exists (
-    select 1 from bookings
-    where opportunity_id = o.id and candidate_id = me.id
-      and status in ('invited', 'pending', 'confirmed', 'attended', 'no_show')
-      and (not via_invite or status <> 'invited')
+    select 1 from bookings where opportunity_id = o.id and candidate_id = me.id and status in ('pending', 'confirmed', 'checked_in', 'done')
   ) then raise exception 'Booked'; end if;
-  if o.kind = 'shift' and not exists (
-    select 1 from eligibility where restaurant_id = o.restaurant_id and candidate_id = me.id and eligible
-  ) then raise exception 'Intro first'; end if;
+  if o.kind = 'training' and is_unlocked(o.restaurant_id, me.id) then raise exception 'Done'; end if;
+  if o.kind = 'shift' and not is_unlocked(o.restaurant_id, me.id) then raise exception 'Training first'; end if;
   select string_agg(s, ', ') into missing from unnest(o.skills) s where not s = any (me.skills);
   if missing is not null then raise exception 'Needs %', missing; end if;
   if exists (
     select 1 from bookings b join opportunities x on x.id = b.opportunity_id
-    where b.candidate_id = me.id and b.status in ('pending', 'confirmed') and x.id <> o.id
+    where b.candidate_id = me.id and b.status in ('pending', 'confirmed', 'checked_in') and x.id <> o.id
       and tstzrange(x.starts_at, x.ends_at) && tstzrange(o.starts_at, o.ends_at)
-  ) then raise exception 'Clashes with another booking'; end if;
+  ) then raise exception 'Busy then'; end if;
   if o.filled >= o.openings then raise exception 'Full'; end if;
-end $$;
-
-create function write_eligible(r uuid, c uuid, ok boolean) returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  was boolean;
-begin
-  select eligible into was from eligibility where restaurant_id = r and candidate_id = c;
-  insert into eligibility (restaurant_id, candidate_id, eligible, updated_by, updated_at)
-  values (r, c, ok, auth.uid(), now())
-  on conflict (restaurant_id, candidate_id) do update set eligible = ok, updated_by = auth.uid(), updated_at = now();
-  if ok and not coalesce(was, false) then
-    perform notify(c, 'eligible', '🔓 Shifts unlocked · ' || (select name from restaurants where id = r), null, null, r);
-  end if;
 end $$;
 
 -- ───────────────────────── candidate actions ─────────────────────────
 
-create function book(p_opp uuid) returns booking_status
+create function book(p_opp uuid) returns void
 language plpgsql security definer set search_path = public as $$
 declare
   uid uuid := require_uid();
   me profiles;
   o opportunities;
-  r restaurants;
-  st booking_status;
-  bid uuid;
 begin
   -- lock order everywhere: profile, then opportunity
   select * into me from profiles where id = uid for update;
   if not found then raise exception 'Finish your profile first'; end if;
   select * into o from opportunities where id = p_opp for update;
   if not found then raise exception 'Not found'; end if;
-  perform assert_can_take(me, o, false);
-  select * into r from restaurants where id = o.restaurant_id;
-  st := case when r.auto_confirm then 'confirmed' else 'pending' end;
-  insert into bookings (opportunity_id, candidate_id, status) values (o.id, uid, st) returning id into bid;
+  perform assert_can_take(me, o);
+  insert into bookings (opportunity_id, candidate_id) values (o.id, uid);
   update opportunities set filled = filled + 1 where id = o.id;
-  perform notify_managers(r.id, case when st = 'pending' then 'request' else 'booked' end, me.name || ' · ' || opp_label(o), o.id);
-  if st = 'confirmed' then perform notify(uid, 'booked', r.name || ' · ' || opp_label(o), o.id, bid, r.id); end if;
-  return st;
+  perform notify_managers(o.restaurant_id, 'request', me.name || ' · ' || opp_label(o), o.id);
 end $$;
 
 create function cancel_booking(p_booking uuid) returns void
@@ -254,34 +237,66 @@ begin
   perform notify_managers(o.restaurant_id, 'withdrawn', (select name from profiles where id = uid) || ' cancelled · ' || opp_label(o), o.id);
 end $$;
 
-create function respond_invite(p_booking uuid, p_accept boolean) returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  uid uuid := require_uid();
-  me profiles;
-  b bookings;
-  o opportunities;
-begin
-  select * into me from profiles where id = uid for update;
-  select * into o from opportunities where id = (select opportunity_id from bookings where id = p_booking and candidate_id = uid) for update;
-  if not found then raise exception 'Not found'; end if;
-  select * into b from bookings where id = p_booking;
-  if b.status <> 'invited' then raise exception 'Already answered'; end if;
-  if p_accept then
-    perform assert_can_take(me, o, true);
-    update bookings set status = 'confirmed', updated_at = now() where id = b.id;
-    update opportunities set filled = filled + 1 where id = o.id;
-  else
-    update bookings set status = 'declined', updated_at = now() where id = b.id;
-  end if;
-  perform notify_managers(o.restaurant_id, case when p_accept then 'accepted' else 'declined' end,
-    me.name || case when p_accept then ' accepted · ' else ' declined · ' end || opp_label(o), o.id);
-end $$;
-
 create function read_notes() returns void
 language sql security definer set search_path = public as $$
   update notifications set read = true where user_id = auth.uid() and not read
 $$;
+
+-- ───────────────────────── candidate or restaurant ─────────────────────────
+
+create function check_in(p_booking uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid := require_uid();
+  b bookings;
+  o opportunities;
+  by_candidate boolean;
+begin
+  select * into o from opportunities where id = (select opportunity_id from bookings where id = p_booking) for update;
+  if not found then raise exception 'Not found'; end if;
+  select * into b from bookings where id = p_booking;
+  by_candidate := b.candidate_id = uid;
+  if not by_candidate and not is_member(o.restaurant_id) then raise exception 'Not yours'; end if;
+  if b.status <> 'confirmed' then raise exception 'Not confirmed'; end if;
+  if now() < o.starts_at - interval '1 hour' then raise exception 'Opens 1 hour before'; end if;
+  if by_candidate and now() > o.ends_at then raise exception 'Too late'; end if;
+  update bookings set status = 'checked_in', check_in_at = now(), updated_at = now() where id = b.id;
+  if by_candidate then
+    perform notify_managers(o.restaurant_id, 'checkin', (select name from profiles where id = uid) || ' checked in · ' || opp_label(o), o.id);
+  else
+    perform notify(b.candidate_id, 'checkin', 'Checked in · ' || (select name from restaurants where id = o.restaurant_id), o.id, b.id, o.restaurant_id);
+  end if;
+end $$;
+
+create function check_out(p_booking uuid) returns void
+language plpgsql security definer set search_path = public as $$
+declare
+  uid uuid := require_uid();
+  b bookings;
+  o opportunities;
+  rname text;
+  by_candidate boolean;
+begin
+  select * into o from opportunities where id = (select opportunity_id from bookings where id = p_booking) for update;
+  if not found then raise exception 'Not found'; end if;
+  select * into b from bookings where id = p_booking;
+  by_candidate := b.candidate_id = uid;
+  if not by_candidate and not is_member(o.restaurant_id) then raise exception 'Not yours'; end if;
+  if b.status <> 'checked_in' then raise exception 'Check in first'; end if;
+  if by_candidate and now() > o.ends_at + interval '12 hours' then raise exception 'Too late'; end if;
+  update bookings set status = 'done', check_out_at = now(), updated_at = now() where id = b.id;
+  update restaurants set xp = xp + 1 where id = o.restaurant_id returning name into rname;
+  insert into quests (restaurant_id, candidate_id, booking_id, kind) values (o.restaurant_id, b.candidate_id, b.id, o.kind)
+  on conflict (booking_id) do nothing;
+  if o.kind = 'training' then
+    perform notify(b.candidate_id, 'unlocked', '🔓 ' || rname || ' unlocked', o.id, b.id, o.restaurant_id);
+  else
+    perform notify(b.candidate_id, 'quest', '+1 ⭐ ' || rname, o.id, b.id, o.restaurant_id);
+  end if;
+  if by_candidate then
+    perform notify_managers(o.restaurant_id, 'checkout', (select name from profiles where id = uid) || ' checked out · ' || opp_label(o), o.id);
+  end if;
+end $$;
 
 -- ───────────────────────── restaurant actions ─────────────────────────
 
@@ -328,16 +343,9 @@ begin
   return rid;
 end $$;
 
-create function set_auto_confirm(p_restaurant uuid, p_on boolean) returns void
-language plpgsql security definer set search_path = public as $$
-begin
-  if not is_member(p_restaurant) then raise exception 'Not your restaurant'; end if;
-  update restaurants set auto_confirm = p_on where id = p_restaurant;
-end $$;
-
 create function post_opportunity(
-  p_restaurant uuid, p_kind kind, p_role text, p_start timestamptz, p_end timestamptz, p_openings int,
-  p_pay_cents int, p_skills text[], p_notes text, p_deadline timestamptz, p_awards_point boolean
+  p_restaurant uuid, p_kind kind, p_role text, p_start timestamptz, p_end timestamptz,
+  p_openings int, p_pay_cents int, p_skills text[], p_notes text, p_deadline timestamptz
 ) returns uuid
 language plpgsql security definer set search_path = public as $$
 declare
@@ -346,9 +354,10 @@ begin
   perform require_uid();
   if not is_member(p_restaurant) then raise exception 'Not your restaurant'; end if;
   if p_start <= now() then raise exception 'Pick a future time'; end if;
-  if p_kind <> 'intro' and p_pay_cents <= 0 then raise exception 'Training and shifts are paid'; end if;
-  insert into opportunities (restaurant_id, kind, role, starts_at, ends_at, openings, pay_cents, skills, notes, deadline, awards_point)
-  values (p_restaurant, p_kind, trim(p_role), p_start, p_end, p_openings, p_pay_cents, coalesce(p_skills, '{}'), left(coalesce(p_notes, ''), 200), p_deadline, p_awards_point)
+  if coalesce(p_pay_cents, 0) <= 0 then raise exception 'Add pay'; end if;
+  insert into opportunities (restaurant_id, kind, role, starts_at, ends_at, openings, pay_cents, skills, notes, deadline)
+  values (p_restaurant, p_kind, case when p_kind = 'training' then 'Training' else trim(p_role) end, p_start, p_end, p_openings,
+          p_pay_cents, coalesce(p_skills, '{}'), left(coalesce(p_notes, ''), 200), p_deadline)
   returning id into oid;
   return oid;
 end $$;
@@ -366,15 +375,17 @@ begin
   select name into rname from restaurants where id = o.restaurant_id;
   for b in
     update bookings set status = 'cancelled', updated_at = now()
-    where opportunity_id = o.id and status in ('invited', 'pending', 'confirmed')
+    where opportunity_id = o.id and status in ('pending', 'confirmed')
     returning id, candidate_id
   loop
     perform notify(b.candidate_id, 'cancelled', rname || ' cancelled ' || opp_label(o), o.id, b.id, o.restaurant_id);
   end loop;
-  update opportunities set cancelled = true, filled = 0 where id = o.id;
+  update opportunities set cancelled = true,
+    filled = (select count(*) from bookings where opportunity_id = o.id and status in ('pending', 'confirmed', 'checked_in', 'done'))
+  where id = o.id;
 end $$;
 
-create function decide_booking(p_booking uuid, p_approve boolean) returns void
+create function confirm_booking(p_booking uuid, p_yes boolean) returns void
 language plpgsql security definer set search_path = public as $$
 declare
   b bookings;
@@ -385,13 +396,13 @@ begin
   if not found or not is_member(o.restaurant_id) then raise exception 'Not your restaurant'; end if;
   select * into b from bookings where id = p_booking;
   if b.status <> 'pending' then raise exception 'Already handled'; end if;
-  update bookings set status = case when p_approve then 'confirmed'::booking_status else 'declined'::booking_status end, updated_at = now() where id = b.id;
-  if not p_approve then update opportunities set filled = greatest(filled - 1, 0) where id = o.id; end if;
-  perform notify(b.candidate_id, case when p_approve then 'approved' else 'declined' end,
+  update bookings set status = case when p_yes then 'confirmed'::booking_status else 'declined'::booking_status end, updated_at = now() where id = b.id;
+  if not p_yes then update opportunities set filled = greatest(filled - 1, 0) where id = o.id; end if;
+  perform notify(b.candidate_id, case when p_yes then 'confirmed' else 'declined' end,
     (select name from restaurants where id = o.restaurant_id) || ' · ' || opp_label(o), o.id, b.id, o.restaurant_id);
 end $$;
 
-create function record_attendance(p_booking uuid, p_attended boolean, p_eligible boolean default null) returns void
+create function review_candidate(p_booking uuid, p_stars int) returns void
 language plpgsql security definer set search_path = public as $$
 declare
   b bookings;
@@ -402,51 +413,27 @@ begin
   select * into o from opportunities where id = (select opportunity_id from bookings where id = p_booking) for update;
   if not found or not is_member(o.restaurant_id) then raise exception 'Not your restaurant'; end if;
   select * into b from bookings where id = p_booking;
-  if b.status <> 'confirmed' then raise exception 'Already recorded'; end if;
-  if (now() at time zone 'America/New_York')::date < (o.starts_at at time zone 'America/New_York')::date then
-    raise exception 'Not started yet';
-  end if;
-  select name into rname from restaurants where id = o.restaurant_id;
-  update bookings set status = case when p_attended then 'attended'::booking_status else 'no_show'::booking_status end, updated_at = now() where id = b.id;
-  if p_attended and o.awards_point then
-    insert into quests (restaurant_id, candidate_id, booking_id, kind) values (o.restaurant_id, b.candidate_id, b.id, o.kind)
-    on conflict (booking_id) do nothing;
-    perform notify(b.candidate_id, 'quest', '+1 ⭐ ' || rname, o.id, b.id, o.restaurant_id);
-  end if;
-  if not p_attended then
-    perform notify(b.candidate_id, 'noshow', 'Marked absent · ' || rname || ' · ' || opp_label(o), o.id, b.id, o.restaurant_id);
-  end if;
-  if p_attended and o.kind <> 'shift' and p_eligible is not null then
-    perform write_eligible(o.restaurant_id, b.candidate_id, p_eligible);
-  end if;
+  if b.status <> 'done' then raise exception 'Not finished yet'; end if;
+  if p_stars not between 1 and 5 then raise exception '1 to 5 stars'; end if;
+  if exists (select 1 from reviews where booking_id = b.id) then raise exception 'Already reviewed'; end if;
+  insert into reviews (booking_id, restaurant_id, candidate_id, stars, created_by) values (b.id, o.restaurant_id, b.candidate_id, p_stars, auth.uid());
+  update restaurants set xp = xp + 1 where id = o.restaurant_id returning name into rname;
+  perform notify(b.candidate_id, 'review', repeat('★', p_stars) || ' from ' || rname, o.id, b.id, o.restaurant_id);
 end $$;
 
-create function set_eligibility(p_restaurant uuid, p_candidate uuid, p_eligible boolean) returns void
-language plpgsql security definer set search_path = public as $$
-begin
-  if not is_member(p_restaurant) then raise exception 'Not your restaurant'; end if;
-  perform write_eligible(p_restaurant, p_candidate, p_eligible);
-end $$;
-
-create function invite_candidate(p_opp uuid, p_candidate uuid) returns void
-language plpgsql security definer set search_path = public as $$
-declare
-  o opportunities;
-  bid uuid;
-begin
-  select * into o from opportunities where id = p_opp for update;
-  if not found or not is_member(o.restaurant_id) then raise exception 'Not your restaurant'; end if;
-  if o.cancelled or now() >= o.starts_at then raise exception 'Too late'; end if;
-  if not exists (select 1 from profiles where id = p_candidate) then raise exception 'Not found'; end if;
-  if o.kind = 'shift' and not exists (
-    select 1 from eligibility where restaurant_id = o.restaurant_id and candidate_id = p_candidate and eligible
-  ) then raise exception 'Needs intro first'; end if;
-  if exists (
-    select 1 from bookings where opportunity_id = o.id and candidate_id = p_candidate and status in ('invited', 'pending', 'confirmed')
-  ) then raise exception 'Already in'; end if;
-  insert into bookings (opportunity_id, candidate_id, status, source) values (o.id, p_candidate, 'invited', 'invite') returning id into bid;
-  perform notify(p_candidate, 'invite', (select name from restaurants where id = o.restaurant_id) || ' invited you · ' || opp_label(o), o.id, bid, o.restaurant_id);
-end $$;
+/** Level (all finished quests) and review average for people who booked with my restaurants. */
+create function candidate_stats() returns table (candidate_id uuid, quests int, rating numeric, reviews int)
+language sql stable security definer set search_path = public as $$
+  with mine as (
+    select distinct b.candidate_id from bookings b join opportunities o on o.id = b.opportunity_id
+    where is_member(o.restaurant_id)
+  )
+  select m.candidate_id,
+    (select count(*)::int from quests q where q.candidate_id = m.candidate_id),
+    (select round(avg(r.stars), 2) from reviews r where r.candidate_id = m.candidate_id),
+    (select count(*)::int from reviews r where r.candidate_id = m.candidate_id)
+  from mine m
+$$;
 
 -- Run from the SQL editor (service role) to issue a code; returns the plain code once.
 create function admin_create_invite(p_restaurant uuid default null, p_max_uses int default 1) returns text
@@ -467,13 +454,12 @@ alter table invite_codes enable row level security;
 alter table opportunities enable row level security;
 alter table bookings enable row level security;
 alter table quests enable row level security;
-alter table eligibility enable row level security;
+alter table reviews enable row level security;
 alter table notifications enable row level security;
 
--- Managers can see discoverable candidates and anyone who has booked with them.
+-- Restaurants only see people who booked with them.
 create policy profiles_read on profiles for select to authenticated using (
   id = auth.uid()
-  or (discoverable and is_manager())
   or exists (select 1 from bookings b join opportunities o on o.id = b.opportunity_id where b.candidate_id = profiles.id and is_member(o.restaurant_id))
 );
 create policy profiles_insert on profiles for insert to authenticated with check (id = auth.uid());
@@ -487,7 +473,7 @@ create policy bookings_read on bookings for select to authenticated using (
 );
 -- A restaurant only ever sees quest points earned at that restaurant.
 create policy quests_read on quests for select to authenticated using (candidate_id = auth.uid() or is_member(restaurant_id));
-create policy eligibility_read on eligibility for select to authenticated using (candidate_id = auth.uid() or is_member(restaurant_id));
+create policy reviews_read on reviews for select to authenticated using (candidate_id = auth.uid() or is_member(restaurant_id));
 create policy notifications_read on notifications for select to authenticated using (user_id = auth.uid());
 -- invite_codes: no policies → unreadable by clients.
 
@@ -495,21 +481,18 @@ create policy notifications_read on notifications for select to authenticated us
 -- so internal helpers must be revoked from those roles explicitly.
 revoke execute on function require_uid(), opp_label(opportunities),
   notify(uuid, text, text, uuid, uuid, uuid), notify_managers(uuid, text, text, uuid),
-  assert_can_take(profiles, opportunities, boolean), write_eligible(uuid, uuid, boolean),
-  admin_create_invite(uuid, int)
+  is_unlocked(uuid, uuid), assert_can_take(profiles, opportunities), admin_create_invite(uuid, int)
   from public, anon, authenticated;
 -- used inside RLS policies
-revoke execute on function is_member(uuid), is_manager() from public, anon;
-grant execute on function is_member(uuid), is_manager() to authenticated;
-revoke execute on function book(uuid), cancel_booking(uuid), respond_invite(uuid, boolean), read_notes(),
+revoke execute on function is_member(uuid) from public, anon;
+grant execute on function is_member(uuid) to authenticated;
+revoke execute on function book(uuid), cancel_booking(uuid), read_notes(), check_in(uuid), check_out(uuid),
   check_invite_code(text), register_restaurant(text, text, text, text, double precision, double precision, text, text),
-  set_auto_confirm(uuid, boolean), post_opportunity(uuid, kind, text, timestamptz, timestamptz, int, int, text[], text, timestamptz, boolean),
-  cancel_opportunity(uuid), decide_booking(uuid, boolean), record_attendance(uuid, boolean, boolean),
-  set_eligibility(uuid, uuid, boolean), invite_candidate(uuid, uuid)
+  post_opportunity(uuid, kind, text, timestamptz, timestamptz, int, int, text[], text, timestamptz),
+  cancel_opportunity(uuid), confirm_booking(uuid, boolean), review_candidate(uuid, int), candidate_stats()
   from public, anon;
-grant execute on function book(uuid), cancel_booking(uuid), respond_invite(uuid, boolean), read_notes(),
+grant execute on function book(uuid), cancel_booking(uuid), read_notes(), check_in(uuid), check_out(uuid),
   check_invite_code(text), register_restaurant(text, text, text, text, double precision, double precision, text, text),
-  set_auto_confirm(uuid, boolean), post_opportunity(uuid, kind, text, timestamptz, timestamptz, int, int, text[], text, timestamptz, boolean),
-  cancel_opportunity(uuid), decide_booking(uuid, boolean), record_attendance(uuid, boolean, boolean),
-  set_eligibility(uuid, uuid, boolean), invite_candidate(uuid, uuid)
+  post_opportunity(uuid, kind, text, timestamptz, timestamptz, int, int, text[], text, timestamptz),
+  cancel_opportunity(uuid), confirm_booking(uuid, boolean), review_candidate(uuid, int), candidate_stats()
   to authenticated;

@@ -1,12 +1,17 @@
 import { useState } from 'react'
 import { useStore } from '../../store'
-import { bookingFor, isOpen, KIND, match, oppOf } from '../../lib/rules'
-import { Calendar, Legend, type CalItem, type CalTone } from '../../components/Calendar'
+import { bookingFor, fit, isOpen, oppOf, unlocked } from '../../lib/rules'
+import { Calendar, Legend, type CalItem } from '../../components/Calendar'
 import { OppCard } from '../../components/OppCard'
 import { Bell } from '../../components/Overlays'
 import { Segmented } from '../../components/ui'
 
-const kindTone = (k: string): CalTone => (KIND[k as keyof typeof KIND]?.tone as CalTone) ?? 'mint'
+export const CANDIDATE_LEGEND = [
+  { tone: 'lav' as const, label: 'Training' },
+  { tone: 'mint' as const, label: 'Shift' },
+  { tone: 'sun' as const, label: 'Requested' },
+  { tone: 'grey' as const, label: 'Done' },
+]
 
 export function Plans({ onBell, onPlace }: { onBell: () => void; onPlace: (restaurantId: string) => void }) {
   const { snap } = useStore()
@@ -23,17 +28,18 @@ export function Plans({ onBell, onPlace }: { onBell: () => void; onPlace: (resta
       .map(({ b, o }) => ({
         id: b.id,
         start: o.start,
-        tone: b.status === 'invited' ? 'pink' : b.status === 'pending' ? 'sun' : b.status === 'attended' || b.status === 'no_show' ? 'grey' : kindTone(o.kind),
+        tone: b.status === 'pending' ? 'sun' : b.status === 'done' ? 'grey' : o.kind === 'training' ? 'lav' : 'mint',
         node: <OppCard o={o} r={place(o.restaurantId)} showPlace onPlace={() => onPlace(o.restaurantId)} />,
       }))
   } else {
+    // Training at stores still locked, shifts at stores already unlocked.
     const now = Date.now()
     items = snap.opps
-      .filter((o) => isOpen(o, now) && !bookingFor(snap, o.id, me.id))
+      .filter((o) => isOpen(o, now) && !bookingFor(snap, o.id, me.id) && (o.kind === 'shift') === unlocked(snap, o.restaurantId, me.id))
       .map((o) => ({ o, r: place(o.restaurantId) }))
       .filter((x) => x.r)
-      .sort((a, b) => match(me, b.o, b.r, snap).score - match(me, a.o, a.r, snap).score)
-      .map(({ o, r }) => ({ id: o.id, start: o.start, tone: kindTone(o.kind), node: <OppCard o={o} r={r} showPlace onPlace={() => onPlace(r.id)} /> }))
+      .sort((a, b) => fit(me, b.o, b.r) - fit(me, a.o, a.r))
+      .map(({ o, r }) => ({ id: o.id, start: o.start, tone: o.kind === 'training' ? 'lav' : 'mint', node: <OppCard o={o} r={r} showPlace onPlace={() => onPlace(r.id)} /> }))
   }
 
   return (
@@ -53,7 +59,7 @@ export function Plans({ onBell, onPlace }: { onBell: () => void; onPlace: (resta
           <Bell onOpen={onBell} />
         </div>
         <div className="mt-2">
-          <Legend />
+          <Legend tones={CANDIDATE_LEGEND} />
         </div>
       </div>
       <div className="px-4 pb-6">

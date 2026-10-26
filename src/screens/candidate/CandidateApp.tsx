@@ -1,5 +1,4 @@
 import { useState } from 'react'
-import { useStore } from '../../store'
 import { Notifications } from '../../components/Overlays'
 import { Icon, TabBar } from '../../components/ui'
 import { Me } from './Me'
@@ -9,11 +8,9 @@ import { Town } from './Town'
 type Tab = 'town' | 'plans' | 'me'
 
 export function CandidateApp() {
-  const { snap } = useStore()
   const [tab, setTab] = useState<Tab>('town')
   const [bell, setBell] = useState(false)
   const [selected, setSelected] = useState<string | null>(null)
-  const invites = snap.bookings.filter((b) => b.candidateId === snap.me?.id && b.status === 'invited').length
 
   return (
     <div className="flex h-full flex-col">
@@ -35,7 +32,7 @@ export function CandidateApp() {
         onChange={setTab}
         tabs={[
           { id: 'town', icon: <Icon.map />, label: 'Town' },
-          { id: 'plans', icon: <Icon.cal />, label: 'Calendar', dot: invites },
+          { id: 'plans', icon: <Icon.cal />, label: 'Calendar' },
           { id: 'me', icon: <Icon.me />, label: 'Me' },
         ]}
       />

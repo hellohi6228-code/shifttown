@@ -1,11 +1,8 @@
-export type Kind = 'intro' | 'training' | 'shift'
+/** training: one per store, unlocks that store's shifts. shift: real paid work. */
+export type Kind = 'training' | 'shift'
 
-/** invited: manager asked, candidate hasn't answered (holds no spot).
- *  pending: candidate requested, manager hasn't answered (holds a spot).
- *  confirmed → attended | no_show once the day arrives. */
-export type BookingStatus = 'invited' | 'pending' | 'confirmed' | 'declined' | 'cancelled' | 'attended' | 'no_show'
-
-export type Stage = 'new' | 'booked' | 'completed' | 'eligible' | 'active'
+/** pending → confirmed (by restaurant) → checked_in → done. */
+export type BookingStatus = 'pending' | 'confirmed' | 'checked_in' | 'done' | 'declined' | 'cancelled'
 
 export interface Look {
   skin: number
@@ -26,7 +23,6 @@ export interface Profile {
   slots: string[]
   roles: string[]
   skills: string[]
-  discoverable: boolean
   demo?: boolean
 }
 
@@ -40,7 +36,8 @@ export interface Restaurant {
   lng: number
   mapsUrl: string
   color: string
-  autoConfirm: boolean
+  /** +1 per finished training/shift, +1 per review given */
+  xp: number
   createdAt: string
   demo?: boolean
 }
@@ -54,12 +51,11 @@ export interface Opportunity {
   end: string
   openings: number
   filled: number
-  /** hourly pay in cents; 0 = unpaid (only allowed for intro) */
+  /** hourly pay in cents — always paid */
   payCents: number
   skills: string[]
   notes: string
   deadline: string
-  awardsPoint: boolean
   cancelled: boolean
   createdAt: string
 }
@@ -69,12 +65,13 @@ export interface Booking {
   oppId: string
   candidateId: string
   status: BookingStatus
-  source: 'self' | 'invite'
+  checkInAt?: string
+  checkOutAt?: string
   createdAt: string
   updatedAt: string
 }
 
-/** One row per completed qualifying quest. Always scoped to a single restaurant. */
+/** One per finished training/shift, always scoped to one restaurant. */
 export interface Quest {
   id: string
   restaurantId: string
@@ -84,13 +81,23 @@ export interface Quest {
   at: string
 }
 
-export interface Eligibility {
+export interface Review {
+  id: string
+  bookingId: string
   restaurantId: string
   candidateId: string
-  eligible: boolean
+  stars: number
+  at: string
 }
 
-export type NoteKind = 'booked' | 'request' | 'approved' | 'declined' | 'invite' | 'quest' | 'cancelled' | 'eligible' | 'noshow' | 'withdrawn' | 'accepted'
+/** What a restaurant sees about someone who booked with them. */
+export interface CandidateStats {
+  quests: number
+  rating: number | null
+  reviews: number
+}
+
+export type NoteKind = 'request' | 'confirmed' | 'declined' | 'cancelled' | 'withdrawn' | 'checkin' | 'checkout' | 'quest' | 'unlocked' | 'review'
 
 export interface Note {
   id: string
@@ -111,8 +118,9 @@ export interface Snapshot {
   opps: Opportunity[]
   bookings: Booking[]
   quests: Quest[]
-  eligibility: Eligibility[]
+  reviews: Review[]
   people: Profile[]
+  stats: Record<string, CandidateStats>
   notes: Note[]
 }
 
@@ -127,7 +135,6 @@ export interface PostInput {
   skills: string[]
   notes: string
   deadline: string
-  awardsPoint: boolean
 }
 
 export interface RegisterInput {
